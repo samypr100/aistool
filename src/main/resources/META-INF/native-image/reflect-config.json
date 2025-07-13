@@ -24,6 +24,9 @@
     "name": "[Ldk.tbsalling.aismessages.nmea.messages.NMEAMessage;"
   },
   {
+    "name": "[Ljava.lang.Object;"
+  },
+  {
     "name": "com.fasterxml.jackson.databind.ext.Java7SupportImpl",
     "methods": [
       {
@@ -1005,6 +1008,10 @@
     "queryAllDeclaredConstructors": true
   },
   {
+    "name": "java.lang.Iterable",
+    "queryAllDeclaredMethods": true
+  },
+  {
     "name": "java.lang.Number",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true
@@ -1018,10 +1025,38 @@
     "queryAllDeclaredMethods": true
   },
   {
+    "name": "java.util.AbstractCollection",
+    "allDeclaredFields": true,
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "java.util.AbstractList",
+    "allDeclaredFields": true,
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "java.util.Collection",
+    "queryAllDeclaredMethods": true
+  },
+  {
+    "name": "java.util.Collections$SingletonList",
+    "allDeclaredFields": true,
+    "queryAllDeclaredMethods": true,
+    "queryAllDeclaredConstructors": true
+  },
+  {
+    "name": "java.util.List",
+    "queryAllDeclaredMethods": true
+  },
+  {
     "name": "java.util.Optional",
     "allDeclaredFields": true,
     "queryAllDeclaredMethods": true,
     "queryAllDeclaredConstructors": true
+  },
+  {
+    "name": "java.util.RandomAccess",
+    "queryAllDeclaredMethods": true
   },
   {
     "name": "java.util.concurrent.atomic.AtomicBoolean",
