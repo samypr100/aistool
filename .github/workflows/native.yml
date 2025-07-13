@@ -22,18 +22,19 @@ jobs:
 
   build-native:
 
-    name: graal / ${{ matrix.os }} / ${{ matrix.jdk-version }}
-    runs-on: ${{ matrix.os }}
+    name: graal / ${{ matrix.runner }} / ${{ matrix.jdk }} / ${{ matrix.arch }} / ${{ matrix.toolchain }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
       matrix:
-        jdk-version: [ 21 ]
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-14 # ARM64 OSX
-          - macos-13 # Intel OSX
+        include:
+          - { runner: ubuntu-latest, jdk: 21, arch: x86_64, toolchain: gnu, name: 'x86_64-linux-gnu-jdk-21' }
+          - { runner: ubuntu-latest, jdk: 21, arch: x86_64, toolchain: musl, name: 'x86_64-linux-musl-jdk-21' }
+          - { runner: windows-latest, jdk: 21, arch: x86_64, toolchain: msvc, name: 'x86_64-windows-msvc-jdk-21' }
+          - { runner: macos-14, jdk: 21, arch: aarch64, toolchain: darwin, name: 'aarch64-apple-darwin-jdk-21' } # ARM64 OSX
+          - { runner: macos-13, jdk: 21, arch: x86_64, toolchain: darwin, name: 'x86_64-apple-darwin-jdk-21' } # Intel OSX
 
     steps:
 
@@ -44,18 +45,18 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1.13.0
         if: runner.os == 'Windows'
         with:
-          arch: x64
+          arch: ${{ matrix.arch }}
 
-      - name: Set Up JDK ${{ matrix.jdk-version }}
+      - name: Set Up JDK ${{ matrix.jdk }}
         uses: actions/setup-java@v4
         with:
-          java-version: ${{ matrix.jdk-version }}
+          java-version: ${{ matrix.jdk }}
           distribution: 'temurin'
 
-      - name: Set Up GraalVM ${{ matrix.jdk-version }}
+      - name: Set Up GraalVM ${{ matrix.jdk }}
         uses: graalvm/setup-graalvm@v1
         with:
-          java-version: ${{ matrix.jdk-version }}
+          java-version: ${{ matrix.jdk }}
           distribution: 'graalvm'
           #components: 'native-image' # default
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -70,64 +71,105 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-maven-
 
       - name: Maven Build Graal VM
+        if: ${{ matrix.toolchain != 'musl' }}
         run: ./mvnw -V -B -e -ff -ntp -Pnative clean package
+
+      - name: Maven Static Build Graal VM
+        if: ${{ matrix.toolchain == 'musl' }}
+        shell: bash
+        env:
+          MUSL_VERSION: 1.2.5
+          ZLIB_VERSION: 1.3.1
+        # https://www.graalvm.org/latest/reference-manual/native-image/guides/build-static-executables/
+        run: |
+          # Download musl and zlib sources
+          curl -O https://musl.libc.org/releases/musl-${{ env.MUSL_VERSION }}.tar.gz
+          curl -O https://zlib.net/fossils/zlib-${{ env.ZLIB_VERSION }}.tar.gz
+
+          # Unpack Sources
+          tar -xzvf musl-${{ env.MUSL_VERSION }}.tar.gz
+          tar -xzvf zlib-${{ env.ZLIB_VERSION }}.tar.gz
+
+          export MUSL_HOME=${{ github.workspace }}/musl-toolchain
+
+          # Build musl from source
+          pushd musl-${{ env.MUSL_VERSION }}
+          ./configure --prefix=$MUSL_HOME --static
+          make && make install
+          popd
+
+          # Install a symlink for use by native-image
+          ln -s $MUSL_HOME/bin/musl-gcc $MUSL_HOME/bin/x86_64-linux-musl-gcc
+          export PATH="$MUSL_HOME/bin:$PATH"
+          x86_64-linux-musl-gcc --version
+
+          # Build zlib with musl from source
+          pushd zlib-${{ env.ZLIB_VERSION }}
+          CC=musl-gcc ./configure --prefix=$MUSL_HOME --static
+          make && make install
+          popd
+
+          # Build static native image
+          ./mvnw -V -B -e -ff -ntp -Pnative,native-static clean package
 
       - name: Upload Jar
         uses: actions/upload-artifact@v4
-        continue-on-error: true
+        if: matrix.toolchain != 'musl'
         with:
-          name: java-${{ matrix.jdk-version }}-${{ runner.os }}-${{ runner.arch }}-jar
-          path: target/*-jar-with-dependencies.jar
-          retention-days: 10
-          if-no-files-found: error
-
-      - name: Upload Native
-        uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: java-${{ matrix.jdk-version }}-${{ runner.os }}-${{ runner.arch }}-native
-          path: target/aistool*
+          name: aistool-${{ matrix.name }}-jar
+          path: target/*-with-dependencies.jar
           retention-days: 10
           if-no-files-found: error
 
       - name: Release Jar
-        if: github.event_name == 'release'
+        if: matrix.toolchain != 'musl' && github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_NAME: aistool-${{ runner.os }}-${{ runner.arch }}-java-${{ matrix.jdk-version }}
+          RELEASE_NAME: aistool-${{ matrix.name }}-jar
         shell: bash
         run: |
-          mv target/*-jar-with-dependencies.jar "$RELEASE_NAME.jar"
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            zip "$RELEASE_NAME-jar.zip" "$RELEASE_NAME.jar"
-          elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            7z a "$RELEASE_NAME-jar.zip" "$RELEASE_NAME.jar"
-          elif [[ "$RUNNER_OS" == "Linux" ]]; then
-            zip "$RELEASE_NAME-jar.zip" "$RELEASE_NAME.jar"
+          mv target/*-with-dependencies.jar "aistool.jar"
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            zip "${RELEASE_NAME}.zip" "aistool.jar"
+          elif [[ "${{ runner.os }}" == "Windows" ]]; then
+            7z a "${RELEASE_NAME}.zip" "aistool.jar"
+          elif [[ "${{ runner.os }}" == "Linux" ]]; then
+            zip "${RELEASE_NAME}.zip" "aistool.jar"
           else
             exit 1
           fi
-          gh release upload "${{ github.ref_name }}" "$RELEASE_NAME-jar.zip"
+          gh release upload "${{ github.ref_name }}" "${RELEASE_NAME}.zip"
+
+      - name: Cleanup Jars
+        run: rm target/*.jar
+
+      - name: Upload Native
+        uses: actions/upload-artifact@v4
+        with:
+          name: aistool-${{ matrix.name }}-native
+          path: target/aistool*
+          retention-days: 10
+          if-no-files-found: error
 
       - name: Release Native
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_NAME: aistool-${{ runner.os }}-${{ runner.arch }}-java-${{ matrix.jdk-version }}
+          RELEASE_NAME: aistool-${{ matrix.name }}-native
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
             mv target/aistool* "aistool.app"
-            zip "$RELEASE_NAME-native.zip" "aistool.app"
-          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            zip "${RELEASE_NAME}.zip" "aistool.app"
+          elif [[ "${{ runner.os }}" == "Windows" ]]; then
             mv target/aistool*.exe "aistool.exe"
-            7z a "$RELEASE_NAME-native.zip" "aistool.exe"
-          elif [[ "$RUNNER_OS" == "Linux" ]]; then
+            7z a "${RELEASE_NAME}.zip" "aistool.exe"
+          elif [[ "${{ runner.os }}" == "Linux" ]]; then
             mv target/aistool* "aistool.elf"
-            zip "$RELEASE_NAME-native.zip" "aistool.elf"
+            zip "${RELEASE_NAME}.zip" "aistool.elf"
           else
             exit 1
           fi
-          gh release upload "${{ github.ref_name }}" "$RELEASE_NAME-native.zip"
+          gh release upload "${{ github.ref_name }}" "${RELEASE_NAME}.zip"
